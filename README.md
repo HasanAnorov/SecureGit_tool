@@ -1,4 +1,4 @@
-# Securegit
+# Securegit tool
 
 ## Intro
 Securegit is an open-source tool that provides end-to-end security properties for Git users against other attackers, including compromised Git servers. The underlying scheme of this tool is demonstrated in the paper ["End-to-End Encrypted Git Services"](https://eprint.iacr.org/2025/1208.pdf) accepted by ACM CCS 2025. The artifact is licensed under Apache 2.0.
