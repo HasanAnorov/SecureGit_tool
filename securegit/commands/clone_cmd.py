@@ -73,21 +73,66 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         click.echo(f"[!] Failed to enumerate commits: {e}")
         return
 
-    owner_key_path = enc_path / "shareinfo" / f"{owner_name}_sign_pub.der"
-    if not owner_key_path.exists():
-        raise FileNotFoundError(f"[!] Owner sign_pub not found: {owner_key_path}")
-    with open(owner_key_path, "rb") as f1:
-        owner_public_key = ECC.import_key(f1.read())
+    # shareinfo_commit - the commit that contains keycipher for decryption of commits
+    shareinfo_commit = None
+    try:
+        _=enc_repo.head.commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
+        shareinfo_commit = enc_repo.head.commit
+    except KeyError:
+        #HEAD lacks keycipher, scanning from newest to oldest
+        for commit in enc_repo.iter_commits(): #iter_commits starts from newest
+            try:
+                _=commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
+                shareinfo_commit = commit
+                break
+            except KeyError:
+                continue
+
+    if shareinfo_commit is None:
+        click.echo(f"[!] No commit in this repo contains 'shareinfo/{sharee_name}_keycipher.bin'.")
+        click.echo(f"[!] Either the repo was never shared with '{sharee_name}', or the sharee_name is wrong.")
+        return
+
+    #sign_pubs - needed only when commit lacks shareinfo folder to verify the commits
+    sign_pubs = {}
+    shareinfo_tree = shareinfo_commit.tree / "shareinfo"
+
+    for blob in shareinfo_tree.traverse():
+        if blob.type == 'blob' and blob.name.endswith("_sign_pub.der"):
+            username = blob.name[:-len("_sign_pub.der")]   # strip suffix
+            key_bytes = blob.data_stream.read()
+            sign_pubs[username] = ECC.import_key(key_bytes)
+
+    # checking owner's sign pub - needed to verify shareinfo.sig
+    if owner_name not in sign_pubs:
+        click.echo(f"[!] Owner '{owner_name}' not in shareinfo of commit {shareinfo_commit.hexsha[:12]} — aborting.")
+        return
+
+    owner_public_key = sign_pubs[owner_name]
+
+    # verifying shareinfo.sig before extracting the symkey
+    if not verify_publickey(owner_public_key, shareinfo_commit):
+        click.echo(f"[!] shareinfo.sig verification FAILED for commit {shareinfo_commit.hexsha[:12]} — aborting.")
+        return
+
+    # owner_key_path = enc_path / "shareinfo" / f"{owner_name}_sign_pub.der"
+    # if not owner_key_path.exists():
+    #     raise FileNotFoundError(f"[!] Owner sign_pub not found: {owner_key_path}")
+    # with open(owner_key_path, "rb") as f1:
+    #     owner_public_key = ECC.import_key(f1.read())
 
     with open(sharee_privkey, "rb") as priv_file:
         user_priv_key = priv_file.read()
 
-    cipher_path = enc_path / "shareinfo" / f"{sharee_name}_keycipher.bin"
-    if not cipher_path.exists():
-        raise FileNotFoundError(f"[!] Cipher file not found: {cipher_path}")
+    # cipher_path = enc_path / "shareinfo" / f"{sharee_name}_keycipher.bin"
+    # if not cipher_path.exists():
+    #     raise FileNotFoundError(f"[!] Cipher file not found: {cipher_path}")
+    #
+    # with open(cipher_path, "rb") as f2:
+    #     enc_key = f2.read()
 
-    with open(cipher_path, "rb") as f2:
-        enc_key = f2.read()
+    cipher_path = shareinfo_commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
+    enc_key = cipher_path.data_stream.read()
 
     sym_key = ecies_decrypt_with_aesctr(user_priv_key, enc_key)
 
@@ -112,13 +157,34 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
     # --- 4) Replay commits one by one ---
     for idx, commit in enumerate(commits, start=1):
         click.echo(f"[{idx}/{len(commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
-        if not verify_publickey(owner_public_key, commit):
-            click.echo(f"[!] Creating plaintext commit failed")
-            return
+
+        # if not verify_publickey(owner_public_key, commit):
+        #     click.echo(f"[!] Creating plaintext commit failed")
+        #     return
+
+        # username = commit.author.name
+        # public_file = commit.tree / "shareinfo" / f"{username}_sign_pub.der"
+        # public_key = public_file.data_stream.read()
 
         username = commit.author.name
-        public_file = commit.tree / "shareinfo" / f"{username}_sign_pub.der"
-        public_key = public_file.data_stream.read()
+        #bob -> hasan
+        #git config user.name hasan
+        public_key = None
+
+        try:
+            if verify_publickey(owner_public_key, commit):
+                public_file = commit.tree / "shareinfo" / f"{username}_sign_pub.der"
+                public_key = public_file.data_stream.read()
+        except (KeyError, FileNotFoundError):
+            pass #this commit has no shareinfo -> switch to sign_pubs list to get corresponding public key
+
+        #use sign_pubs list to derive public key when there is no shareinfo folder
+        if public_key is None:
+            if username in sign_pubs:
+                public_key = sign_pubs[username].export_key(format ='DER')
+            else:
+                click.echo(f"[!] Commit {commit.hexsha[:12]} authored by unknown '{username}' — aborting.")
+                return
 
         if not verify_commit(commit, public_key):
             click.echo(f"[!] Creating plaintext commit failed")
