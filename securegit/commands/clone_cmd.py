@@ -42,7 +42,8 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         return
     try:
         click.echo(f"[+] Cloning encrypted repo from {remote_url} -> {enc_path} (branch: {branch}) ...")
-        enc_repo = Repo.clone_from(remote_url, enc_path, branch=branch, single_branch=True)
+        #new line edit - allowing securegit to have multiple branches
+        enc_repo = Repo.clone_from(remote_url, enc_path, branch=branch)
     except GitCommandError as e:
         click.echo(f"[!] Clone failed: {e}")
         return
