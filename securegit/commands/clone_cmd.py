@@ -64,11 +64,14 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         # Ensure encrypted repo is on the requested branch
         if enc_repo.active_branch.name != branch:
             enc_repo.git.checkout(branch)
-        commits = list(enc_repo.iter_commits(branch))
+
+        # every branch, ordered so each parent comes before its children
+        order = enc_repo.git.rev_list("--all", "--topo-order", "--reverse").split()
+        commits = [enc_repo.commit(h) for h in order]
         if not commits:
             click.echo("[*] No commits found to replay.")
             return
-        commits.reverse()  # chronological order
+
         click.echo(f"[+] Found {len(commits)} commits to replay.")
     except Exception as e:
         click.echo(f"[!] Failed to enumerate commits: {e}")
@@ -155,6 +158,10 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
 
     encrypted_repo = Repo(encrypted_repo_path)
 
+    # cipher commit hash -> the plain commit we created for it,
+    # used to resolve a commit's parents and to position the working tree
+    plain_of = {}
+
     # --- 4) Replay commits one by one ---
     for idx, commit in enumerate(commits, start=1):
         click.echo(f"[{idx}/{len(commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
@@ -168,8 +175,6 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         # public_key = public_file.data_stream.read()
 
         username = commit.author.name
-        #bob -> hasan
-        #git config user.name hasan
         public_key = None
 
         try:
@@ -191,6 +196,12 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
             click.echo(f"[!] Creating plaintext commit failed")
             return
 
+        # the patch applies to this commit's first parent, so put that on disk first
+        if commit.parents:
+            target = plain_of[commit.parents[0].hexsha]
+            if plain_repo.head.is_valid() and plain_repo.head.commit != target:
+                plain_repo.git.checkout(target.hexsha)
+
         if mode == 'char':
             diff_info = get_git_diff_name(encrypted_repo, commit.hexsha)
             print(diff_info)
@@ -208,15 +219,29 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
             author = Actor(commit.author.name, commit.author.email)
             committer = Actor(commit.committer.name, commit.committer.email)
             # Use same message; dates can be preserved via env vars, but we’ll keep it simple
+            #todo - think about implementing dates too
+            parents = [plain_of[p.hexsha] for p in commit.parents]
             new_commit = plain_repo.index.commit(
                 separated_msg[1],
                 author=author,
                 committer=committer,
+                parent_commits=parents,
             )
+            plain_of[commit.hexsha] = new_commit
             click.echo(f"    -> plaintext commit {new_commit.hexsha[:12]} created.")
         except Exception as e:
             click.echo(f"[!] Creating plaintext commit failed: {e}")
             return
+
+         # give plain a branch for every cipher branch, then check out the requested one
+    for ref in enc_repo.remotes.origin.refs:
+        name = ref.remote_head
+        if name == "HEAD":
+            continue
+        plain_repo.create_head(name, plain_of[ref.commit.hexsha].hexsha, force=True)
+        click.echo(f"[+] Created plaintext branch '{name}'")
+
+    plain_repo.git.checkout(branch)
 
     click.echo("[✓] Replay finished. Plaintext repo is now restored with decrypted history.")
 
