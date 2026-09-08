@@ -65,8 +65,9 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         if enc_repo.active_branch.name != branch:
             enc_repo.git.checkout(branch)
 
-        # every branch, ordered so each parent comes before its children
-        order = enc_repo.git.rev_list("--all", "--topo-order", "--reverse").split()
+        # the requested branch only, ordered so each parent comes before its children
+        order = enc_repo.git.rev_list(branch, "--topo-order", "--reverse").split()
+
         commits = [enc_repo.commit(h) for h in order]
         if not commits:
             click.echo("[*] No commits found to replay.")
@@ -233,13 +234,10 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
             click.echo(f"[!] Creating plaintext commit failed: {e}")
             return
 
-         # give plain a branch for every cipher branch, then check out the requested one
-    for ref in enc_repo.remotes.origin.refs:
-        name = ref.remote_head
-        if name == "HEAD":
-            continue
-        plain_repo.create_head(name, plain_of[ref.commit.hexsha].hexsha, force=True)
-        click.echo(f"[+] Created plaintext branch '{name}'")
+    # name the plaintext tip after the branch we replayed, then check it out
+    tip = plain_of[enc_repo.commit(branch).hexsha]
+    plain_repo.create_head(branch, tip.hexsha, force=True)
+    click.echo(f"[+] Created plaintext branch '{branch}'")
 
     plain_repo.git.checkout(branch)
 
