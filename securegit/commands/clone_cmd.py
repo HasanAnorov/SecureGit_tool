@@ -53,7 +53,7 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
     else:
         plain_path.mkdir(parents=True, exist_ok=True)
 
-    plain_repo = Repo.init(plain_path)
+    plain_repo = Repo.init(plain_path, initial_branch = branch)
     click.echo(f"[+] Initialized plaintext repo at {plain_path}")
 
     try:

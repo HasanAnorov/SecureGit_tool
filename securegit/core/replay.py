@@ -29,8 +29,8 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey):
         _ = enc_repo.head.commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
         shareinfo_commit = enc_repo.head.commit
     except KeyError:
-        # HEAD lacks keycipher, scanning from newest to oldest
-        for commit in enc_repo.iter_commits():
+        # HEAD lacks keycipher: scan every branch, newest commit first
+        for commit in enc_repo.iter_commits(all=True):
             try:
                 _ = commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
                 shareinfo_commit = commit
