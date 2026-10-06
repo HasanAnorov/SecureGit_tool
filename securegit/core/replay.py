@@ -81,10 +81,13 @@ def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name:
 
     Moved from clone_cmd.py; behaviour unchanged.
     """
-    # branches plain already has; their commits are built, so skip them.
-    # only names the cipher repo also knows, or rev-list would fail on them
-    enc_names = {h.name for h in enc_repo.heads}
-    built = [h.name for h in plain_repo.heads if h.name in enc_names]
+    # branches plain already has -> skip their commits. Name them the way the
+    # cipher repo knows them: a local branch if there is one, else origin/<name>.
+    known = {h.name: h.name for h in enc_repo.heads}
+    for remote in enc_repo.remotes:
+        for ref in remote.refs:
+            known.setdefault(ref.remote_head, str(ref))
+    built = [known[h.name] for h in plain_repo.heads if h.name in known]
 
     # the requested branch only, minus what is already built,
     # ordered so each parent comes before its children
