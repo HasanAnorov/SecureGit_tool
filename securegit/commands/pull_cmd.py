@@ -52,6 +52,12 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
         with open(out_path, "wb") as f3:
             f3.write(sym_key)
 
+    # a pull replays commits and stages everything, so any uncommitted work
+    # in the plaintext repo would be swept into someone else's commit
+    if plain_repo.is_dirty(untracked_files=True):
+        print("[!] Plaintext repo has uncommitted changes. Commit or stash them before pulling.")
+        return
+
     # 1. Fetch latest remote changes
     try:
         encrypted_repo.git.fetch(remote, branch)
@@ -60,14 +66,14 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
         print(f"[!] Error fetching encrypted repo:\n{e}")
         return
 
-    # 2. Get the list of new commits (not yet merged locally)
-    new_commits = list(encrypted_repo.iter_commits(f'HEAD..{remote}/{branch}'))
+    # 2. Commits on the remote branch that plain does not have yet,
+    #    ordered so each parent comes before its children
+    order = encrypted_repo.git.rev_list(f"{remote}/{branch}", "--not", branch,
+                                        "--topo-order", "--reverse").split()
+    new_commits = [encrypted_repo.commit(h) for h in order]
     if not new_commits:
         print("[+] No new commits to pull.")
         return
-
-    # Apply commits in chronological order
-    new_commits.reverse()
 
     config_path = enc_path / "securegit_config.json"
     if not config_path.exists():
@@ -84,6 +90,10 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
     with open(owner_key_path, "rb") as f1:
         owner_public_key = ECC.import_key(f1.read())
 
+    # cipher commit hash -> the plaintext commit for it. The two branch tips
+    # correspond: plain's branch was built from the cipher branch's current tip.
+    plain_of = {encrypted_repo.commit(branch).hexsha: plain_repo.commit(branch)}
+
     for idx, commit in enumerate(new_commits, start=1):
         click.echo(f"[{idx}/{len(new_commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
 
@@ -98,6 +108,16 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
         if not verify_commit(commit, public_key):
             click.echo(f"[!] Creating plaintext commit failed")
             return
+
+        # the patch applies to this commit's first parent, so put that on disk first
+        if commit.parents:
+            parent = commit.parents[0].hexsha
+            if parent not in plain_of:
+                click.echo(f"[!] no plaintext commit known for parent {parent[:12]}; aborting")
+                return
+            target = plain_of[parent]
+            if plain_repo.head.commit != target:
+                plain_repo.git.checkout(target.hexsha)
 
         if mode == 'char':
             diff_info = get_git_diff_name(encrypted_repo, commit.hexsha)
@@ -116,15 +136,23 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
             author = Actor(commit.author.name, commit.author.email)
             committer = Actor(commit.committer.name, commit.committer.email)
             # Use same message; dates can be preserved via env vars, but we’ll keep it simple
+            parents = [plain_of[p.hexsha] for p in commit.parents]
             new_commit = plain_repo.index.commit(
                 separated_msg[1],
                 author=author,
                 committer=committer,
+                parent_commits=parents,
             )
+            plain_of[commit.hexsha] = new_commit
             click.echo(f"    -> plaintext commit {new_commit.hexsha[:12]} created.")
         except Exception as e:
             click.echo(f"[!] Creating plaintext commit failed: {e}")
             return
+
+    # the rewind left HEAD detached; move the branch to the new tip and return to it
+    tip = plain_of[encrypted_repo.commit(f"{remote}/{branch}").hexsha]
+    plain_repo.create_head(branch, tip.hexsha, force=True)
+    plain_repo.git.checkout(branch)
 
     print("[+] All decrypted changes staged in plaintext repo.")
     # 3. Fast-forward encrypted repo to remote
