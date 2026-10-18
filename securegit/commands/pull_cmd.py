@@ -6,6 +6,7 @@ from ..core.repo_operation import dec_patch_diff, dec_line_diff
 from ..core.Git_command import get_git_diff_name
 from git import Repo, GitCommandError, Actor
 from ..core.crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
+from ..core.branch_anchor_finder import resolve_in_plain
 
 @click.command()
 @click.argument("plaintext_repo_path")
@@ -95,6 +96,14 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
 
     for idx, commit in enumerate(new_commits, start=1):
         click.echo(f"[{idx}/{len(new_commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
+
+        # already built under another branch (e.g. by checkout)? reuse that copy
+        try:
+            plain_of[commit.hexsha] = resolve_in_plain(encrypted_repo, plain_repo, commit.hexsha)
+            click.echo(f"    -> already in plaintext as {plain_of[commit.hexsha].hexsha[:12]}, reused.")
+            continue
+        except ValueError:
+            pass
 
         if not verify_publickey(owner_public_key, commit):
             click.echo(f"[!] Creating plaintext commit failed")
