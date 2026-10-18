@@ -1,7 +1,7 @@
 import click
 from .commands import (init_cmd, add_cmd, keygen_cmd, commit_cmd, branch_cmd,
                        remote_cmd, push_cmd, adduser_cmd, clone_cmd, pull_cmd,
-                       ignore_cmd, newrepo_cmd, checkout_cmd, merge_cmd)
+                       ignore_cmd, newrepo_cmd, checkout_cmd, merge_cmd, fetch_cmd)
 
 @click.group()
 def cli():
@@ -35,6 +35,8 @@ cli.add_command(newrepo_cmd.securegit_newrepo, name="newrepo")
 cli.add_command(checkout_cmd.securegit_checkout, name="checkout")
 
 cli.add_command(merge_cmd.securegit_merge, name="merge")
+
+cli.add_command(fetch_cmd.securegit_fetch, name="fetch")
 
 if __name__ == "__main__":
     cli()
