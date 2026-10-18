@@ -6,11 +6,11 @@ from Crypto.PublicKey import ECC
 from Crypto.Signature import DSS
 from Crypto.Hash import SHA256
 from git import Repo
-import shutil
 import urllib.request
 import urllib.error
 import json
 from securegit.core.crypto_tool import ecies_encrypt_with_aesctr
+from securegit.core.access_branch import ACCESS_BRANCH, read_state, write_state
 
 @click.command()
 @click.argument("enc_repo_path", type=click.Path(exists=True))
@@ -24,14 +24,12 @@ from securegit.core.crypto_tool import ecies_encrypt_with_aesctr
 def securegit_adduser(enc_repo_path, owner_key_path, share_name, enc_pub_path, sig_pub_path,
                         sym_key_path, token):
     """
-    Sign the 'public key' folder in encrypted repo using DSS (fips-186-3).
-    A base64 signature will be written to 'publickey.sig'.
+    Share the repository with a member: add their keys and the repository key
+    encrypted for them as a new owner-signed state on the access branch.
     """
 
     enc_repo_path = Path(enc_repo_path).resolve()
     encrypt_repo = Repo(enc_repo_path)
-    shareinfo_dir = enc_repo_path / "shareinfo"
-    shareinfo_dir.mkdir(parents=True, exist_ok=True)
 
     # --- detect repo owner from remote url ---
     try:
@@ -53,58 +51,35 @@ def securegit_adduser(enc_repo_path, owner_key_path, share_name, enc_pub_path, s
         click.echo(f"[*] No share-name provided, defaulting to repo owner: {repo_owner}")
         share_name = repo_owner
 
-    dest_enc_pub = shareinfo_dir / f"{share_name}_enc_pub.der"
-    dest_sig_pub = shareinfo_dir / f"{share_name}_sign_pub.der"
-    shutil.copyfile(enc_pub_path, dest_enc_pub)
-    shutil.copyfile(sig_pub_path, dest_sig_pub)
-
-    click.echo(f"[+] Copied encryption pubkey -> {dest_enc_pub}")
-    click.echo(f"[+] Copied signing pubkey -> {dest_sig_pub}")
-
-    with open(sym_key_path, "rb") as f:
-        sym_key_data = f.read()
-
+    # start from the newest access state and add this member's three files
+    state = read_state(encrypt_repo)
     with open(enc_pub_path, "rb") as f:
         enc_pub_der = f.read()
+    with open(sig_pub_path, "rb") as f:
+        state[f"shareinfo/{share_name}_sign_pub.der"] = f.read()
+    with open(sym_key_path, "rb") as f:
+        sym_key_data = f.read()
+    state[f"shareinfo/{share_name}_enc_pub.der"] = enc_pub_der
+    state[f"shareinfo/{share_name}_keycipher.bin"] = ecies_encrypt_with_aesctr(enc_pub_der, sym_key_data)
 
-    packed = ecies_encrypt_with_aesctr(enc_pub_der, sym_key_data)
+    # the encryption mode travels with the access state, once it is known
+    config_path = enc_repo_path / "securegit_config.json"
+    if config_path.exists():
+        state["securegit_config.json"] = config_path.read_bytes()
 
-    keycipher_path = shareinfo_dir / f"{share_name}_keycipher.bin"
-
-    with open(keycipher_path, "wb") as f:
-        f.write(packed)
-    click.echo(f"[+] Encrypted symmetric key written to {keycipher_path}")
-
-    sig_file = enc_repo_path / "shareinfo.sig"
-
-    encrypt_repo.git.add("-A")
-
+    # owner's signature over the shareinfo/ files in path order, as before
     h = SHA256.new()
-
-    for entry in sorted(encrypt_repo.index.entries.keys()):
-        path = entry[0]
+    for path in sorted(state):
         if path.startswith("shareinfo/"):
-            blob = encrypt_repo.index.entries[entry][1]  # blob id
-            obj = encrypt_repo.odb.stream(blob)
-            h.update(obj.read())
-
-    # print("hash value:", h.hexdigest())
-
+            h.update(state[path])
     with open(owner_key_path, "rb") as f:
         key = ECC.import_key(f.read())
+    signature = DSS.new(key, "fips-186-3").sign(h)
+    state["shareinfo.sig"] = base64.b64encode(signature)
 
-    signer = DSS.new(key, "fips-186-3")
-    signature = signer.sign(h)
-    sigma_str = base64.b64encode(signature).decode("utf-8")
-
-    # print('signature:', sigma_str)
-
-    with open(sig_file, "w") as f:
-        f.write(sigma_str)
-
-    click.echo(f"[+] Signature written to {sig_file}")
-
-    encrypt_repo.git.add("-A")
+    commit = write_state(encrypt_repo, state, f"access: add {share_name}")
+    click.echo(f"[+] Added '{share_name}' to the access branch '{ACCESS_BRANCH}' (state {commit[:12]})")
+    click.echo(f"[*] Share it with: securegit push {enc_repo_path} origin {ACCESS_BRANCH}")
 
 
     try:
