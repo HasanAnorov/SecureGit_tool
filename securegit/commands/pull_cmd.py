@@ -94,6 +94,9 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
     # correspond: plain's branch was built from the cipher branch's current tip.
     plain_of = {encrypted_repo.commit(branch).hexsha: plain_repo.commit(branch)}
 
+    # replay detached: the branch moves only once, after every commit succeeded
+    plain_repo.git.checkout("--detach")
+
     for idx, commit in enumerate(new_commits, start=1):
         click.echo(f"[{idx}/{len(new_commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
 
@@ -107,6 +110,7 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
 
         if not verify_publickey(owner_public_key, commit):
             click.echo(f"[!] Creating plaintext commit failed")
+            plain_repo.git.checkout("-f", branch)   # back to the untouched branch
             return
 
         username = commit.author.name
@@ -115,6 +119,7 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
 
         if not verify_commit(commit, public_key):
             click.echo(f"[!] Creating plaintext commit failed")
+            plain_repo.git.checkout("-f", branch)   # back to the untouched branch
             return
 
         # the patch applies to this commit's first parent, so put that on disk first
@@ -122,6 +127,7 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
             parent = commit.parents[0].hexsha
             if parent not in plain_of:
                 click.echo(f"[!] no plaintext commit known for parent {parent[:12]}; aborting")
+                plain_repo.git.checkout("-f", branch)   # back to the untouched branch
                 return
             target = plain_of[parent]
             if plain_repo.head.commit != target:
@@ -155,6 +161,7 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
             click.echo(f"    -> plaintext commit {new_commit.hexsha[:12]} created.")
         except Exception as e:
             click.echo(f"[!] Creating plaintext commit failed: {e}")
+            plain_repo.git.checkout("-f", branch)   # back to the untouched branch
             return
 
     # the rewind left HEAD detached; move the branch to the new tip and return to it
