@@ -13,7 +13,8 @@ from ..core.replay import load_crypto, build_branch
 @click.option("--sym_key_out", "symkey_path", type=click.Path(), help="Optional output path for symmetric key")
 @click.option("--branch", "-b", default="main", help="Branch to clone/replay (default: main)")
 @click.option("--plain-all", "plain_all", is_flag=True, help="Build every branch in the plaintext repo, not only the requested one")
-def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_name, sharee_name, sharee_privkey, symkey_path, branch,plain_all):
+@click.option("--single-branch", "single_branch", is_flag=True, help="Download only the requested branch, like git clone --single-branch")
+def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_name, sharee_name, sharee_privkey, symkey_path, branch, plain_all, single_branch):
     """
     securegit clone <remote_url> <encrypted_repo_path> <plaintext_repo_path> [-b branch]
 
@@ -33,6 +34,10 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
     enc_path = Path(encrypted_repo_path).resolve()
     plain_path = Path(plaintext_repo_path).resolve()
 
+    if single_branch and plain_all:
+        click.echo("[!] --single-branch and --plain-all cannot be used together.")
+        return
+
     # --- 1) Clone encrypted repo ---
     if enc_path.exists() and any(enc_path.iterdir()):
         click.echo(f"[!] Encrypted path '{enc_path}' is not empty. Aborting.")
@@ -40,7 +45,7 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
     try:
         click.echo(f"[+] Cloning encrypted repo from {remote_url} -> {enc_path} (branch: {branch}) ...")
         #new line edit - allowing securegit to have multiple branches
-        enc_repo = Repo.clone_from(remote_url, enc_path, branch=branch)
+        enc_repo = Repo.clone_from(remote_url, enc_path, branch=branch, single_branch=single_branch)
     except GitCommandError as e:
         click.echo(f"[!] Clone failed: {e}")
         return
