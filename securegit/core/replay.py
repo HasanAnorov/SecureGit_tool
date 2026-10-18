@@ -17,7 +17,7 @@ class CryptoContext:
     sign_pubs: dict
 
 
-def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey):
+def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey=None, sym_key=None):
     """Find the sharee's access info, verify it, and decrypt the symmetric key.
 
     Moved from clone_cmd.py. Raises ValueError instead of printing and
@@ -59,10 +59,14 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey):
         raise ValueError(f"shareinfo.sig verification FAILED for commit "
                          f"{shareinfo_commit.hexsha[:12]} — aborting.")
 
-    with open(sharee_privkey, "rb") as priv_file:
-        user_priv_key = priv_file.read()
-    enc_key = (shareinfo_commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin").data_stream.read()
-    sym_key = ecies_decrypt_with_aesctr(user_priv_key, enc_key)
+    # repository key: use the saved one if given, otherwise decrypt it with the private key
+    if sym_key is None:
+        if sharee_privkey is None:
+            raise ValueError("Need the saved repository key or the private key to decrypt it.")
+        with open(sharee_privkey, "rb") as priv_file:
+            user_priv_key = priv_file.read()
+        enc_key = (shareinfo_commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin").data_stream.read()
+        sym_key = ecies_decrypt_with_aesctr(user_priv_key, enc_key)
 
     config_path = Path(enc_repo.working_tree_dir) / "securegit_config.json"
     if not config_path.exists():
@@ -76,10 +80,9 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey):
 def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name: str,
                  crypto: CryptoContext):
     """Replay the cipher commits of branch_ref into the plaintext repo and name
-    the result branch_name. Returns the new plaintext tip, or None if there was
-    nothing to replay.
+    the result branch_name. Returns the plaintext tip of the branch.
 
-    Moved from clone_cmd.py; behaviour unchanged.
+    Moved from clone_cmd.py.
     """
     # branches plain already has -> skip their commits. Name them the way the
     # cipher repo knows them: a local branch if there is one, else origin/<name>.
@@ -94,8 +97,18 @@ def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name:
     order = enc_repo.git.rev_list(branch_ref, "--not", *built, "--topo-order", "--reverse").split()
 
     commits = [enc_repo.commit(h) for h in order]
+
     if not commits:
-        return None
+        # nothing to replay: the branch's last commit is already in plain
+        # (e.g. merged into main), so just put the branch name on it
+        tip = resolve_in_plain(enc_repo, plain_repo, enc_repo.commit(branch_ref).hexsha)
+        plain_repo.create_head(branch_name, tip.hexsha, force=True)
+        print(f"[+] Nothing to replay; created plaintext branch '{branch_name}' at an existing commit")
+        plain_repo.git.checkout(branch_name)
+        return tip
+
+    print(f"[+] Found {len(commits)} commits to replay.")
+
     print(f"[+] Found {len(commits)} commits to replay.")
 
     plain_path = plain_repo.working_tree_dir
