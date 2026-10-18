@@ -12,7 +12,8 @@ from ..core.replay import load_crypto, build_branch
 @click.argument("sharee_privkey")
 @click.option("--sym_key_out", "symkey_path", type=click.Path(), help="Optional output path for symmetric key")
 @click.option("--branch", "-b", default="main", help="Branch to clone/replay (default: main)")
-def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_name, sharee_name, sharee_privkey, symkey_path, branch):
+@click.option("--plain-all", "plain_all", is_flag=True, help="Build every branch in the plaintext repo, not only the requested one")
+def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_name, sharee_name, sharee_privkey, symkey_path, branch,plain_all):
     """
     securegit clone <remote_url> <encrypted_repo_path> <plaintext_repo_path> [-b branch]
 
@@ -76,6 +77,18 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
             cfg.set_value("securegit", "owner", owner_name)
             cfg.set_value("securegit", "user", sharee_name)
             cfg.set_value("securegit", "symkey", str(out_path.resolve()))
+
+
+        # --plain-all: build every other branch now, the way checkout would
+        if plain_all:
+            for ref in enc_repo.remote().refs:
+                name = ref.remote_head
+                if name in ("HEAD", branch):
+                    continue
+                plain_repo.git.checkout("--detach")
+                build_branch(enc_repo, plain_repo, str(ref), name, crypto)
+                enc_repo.create_head(name, ref).set_tracking_branch(ref)
+            plain_repo.git.checkout(branch)
 
     except Exception as e:
         click.echo(f"[!] {e}")
