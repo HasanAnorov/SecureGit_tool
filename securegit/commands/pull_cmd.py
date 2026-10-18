@@ -5,8 +5,7 @@ from Crypto.PublicKey import ECC
 from ..core.repo_operation import dec_patch_diff, dec_line_diff
 from ..core.Git_command import get_git_diff_name
 from git import Repo, GitCommandError, Actor
-from ..core.crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr
-
+from ..core.crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
 
 @click.command()
 @click.argument("plaintext_repo_path")
@@ -132,13 +131,13 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
 
         # Commit in plaintext repo mirroring original message/author
         try:
-            separated_msg = commit.message.split('|')
+            timestamp, msg, signature = split_commit_message(commit.message)
             author = Actor(commit.author.name, commit.author.email)
             committer = Actor(commit.committer.name, commit.committer.email)
             # Use same message; dates can be preserved via env vars, but we’ll keep it simple
             parents = [plain_of[p.hexsha] for p in commit.parents]
             new_commit = plain_repo.index.commit(
-                separated_msg[1],
+                msg,
                 author=author,
                 committer=committer,
                 parent_commits=parents,

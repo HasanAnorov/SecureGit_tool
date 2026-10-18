@@ -209,26 +209,39 @@ def get_origin_bytes(commit, commit_time, commit_message):
 
     return result_bytes
 
+
+def split_commit_message(message):
+    """Split an encrypted commit message 'timestamp|message|signature'.
+
+    The timestamp (digits) and the signature (base64) never contain '|',
+    so the message is everything between the first and the last '|'.
+    Raises ValueError if there are fewer than two '|'.
+    """
+    timestamp, rest = message.split("|", 1)
+    msg, signature = rest.rsplit("|", 1)
+    return timestamp, msg, signature
+
 def verify_commit(commit, public_key):
     try:
         public_key = ECC.import_key(public_key)
 
-        separated_msg = commit.message.split('|')
-        if len(separated_msg) < 3:
+        try:
+            timestamp, msg, sig_b64 = split_commit_message(commit.message)
+        except ValueError:
             print(
-                f"[!] Invalid commit format for {commit.hexsha}: expected 'msg|origin|signature', got {commit.message}")
+                f"[!] Invalid commit format for {commit.hexsha}: expected 'timestamp|message|signature', got {commit.message}")
             print(f"[!] Signature verification fails due to invalid update!")
             return False
 
         try:
-            msg_bytes = get_origin_bytes(commit, separated_msg[0], separated_msg[1])
+            msg_bytes = get_origin_bytes(commit, timestamp, msg)
         except Exception as e:
             print(f"[!] Failed to reconstruct message for {commit.hexsha}: {e}")
             print(f"[!] Signature verification fails due to invalid update!")
             return False
 
         try:
-            signature = base64.b64decode(separated_msg[2].encode('utf-8'))
+            signature = base64.b64decode(sig_b64.encode('utf-8'))
         except Exception as e:
             print(f"[!] Failed to decode signature for {commit.hexsha}: {e}")
             print(f"[!] Signature verification fails due to invalid update!")

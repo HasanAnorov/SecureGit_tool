@@ -5,8 +5,8 @@ from Crypto.PublicKey import ECC
 from git import Repo, Actor
 from .Git_command import get_git_diff_name
 from .repo_operation import dec_patch_diff, dec_line_diff
-from .crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr
 from .branch_anchor_finder import resolve_in_plain
+from .crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
 
 @dataclass
 class CryptoContext:
@@ -153,13 +153,13 @@ def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name:
         plain_repo.git.add("-A")
 
         # commit in the plaintext repo, mirroring the original message and author
-        separated_msg = commit.message.split('|')
+        timestamp, msg, signature = split_commit_message(commit.message)
         author = Actor(commit.author.name, commit.author.email)
         committer = Actor(commit.committer.name, commit.committer.email)
         parents = [plain_for(p.hexsha) for p in commit.parents]
         # Use same message; dates can be preserved via env vars, but we’ll keep it simple
         new_commit = plain_repo.index.commit(
-            separated_msg[1],
+            msg,
             author=author,
             committer=committer,
             parent_commits=parents,
