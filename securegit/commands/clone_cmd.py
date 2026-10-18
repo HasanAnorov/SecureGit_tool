@@ -70,6 +70,13 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(crypto.sym_key)
 
+        # remember what checkout and fetch will need, so the user doesn't have
+        # to type it again (stored only in the plaintext repo's local .git/config)
+        with plain_repo.config_writer() as cfg:
+            cfg.set_value("securegit", "owner", owner_name)
+            cfg.set_value("securegit", "user", sharee_name)
+            cfg.set_value("securegit", "symkey", str(out_path.resolve()))
+
     except Exception as e:
         click.echo(f"[!] {e}")
         return
