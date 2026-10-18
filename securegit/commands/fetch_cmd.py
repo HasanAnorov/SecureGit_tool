@@ -20,7 +20,12 @@ def securegit_fetch(plaintext_repo_path, encrypted_repo_path, remote):
     plain_repo = Repo(plaintext_repo_path)
     enc_repo = Repo(encrypted_repo_path)
 
-    before = _remote_branches(enc_repo, remote)
+    try:
+        before = _remote_branches(enc_repo, remote)
+    except ValueError:
+        click.echo(f"[!] No remote named '{remote}' in the encrypted repo.")
+        return
+
     try:
         enc_repo.git.fetch(remote)
     except GitCommandError as e:

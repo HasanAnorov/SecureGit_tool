@@ -2,6 +2,13 @@ import click
 from git import Repo, GitCommandError
 from ..core.replay import load_crypto, build_branch
 
+def _recorded(plain_repo, key):
+    """A value clone recorded in plain's .git/config, as text ('' if missing)."""
+    try:
+        return plain_repo.config_reader().get("securegit", key)
+    except Exception:
+        return ""
+
 def _branch_to_build(plain_repo, enc_repo, args):
     """Return (branch_ref, branch_name) when args name a branch that exists only
     in the encrypted repo and must be built in plain first; otherwise None."""
@@ -48,11 +55,10 @@ def securegit_checkout(plaintext_repo_path, encrypted_repo_path, args, owner_nam
             return
 
         # keys: options first, otherwise what clone recorded
-        cfg = plain_repo.config_reader()
-        owner_name = owner_name or cfg.get_value("securegit", "owner", default="")
-        user_name = user_name or cfg.get_value("securegit", "user", default="")
+        owner_name = owner_name or _recorded(plain_repo, "owner")
+        user_name = user_name or _recorded(plain_repo, "user")
         if not privkey_path:
-            sym_key_path = sym_key_path or cfg.get_value("securegit", "symkey", default="")
+            sym_key_path = sym_key_path or _recorded(plain_repo, "symkey")
         if not owner_name or not user_name or not (sym_key_path or privkey_path):
             click.echo(f"[!] '{branch_name}' must be built from the encrypted repo, but the keys are unknown. "
                        "Run again with --owner NAME --user NAME --sym-key FILE (or --private-key FILE).")
