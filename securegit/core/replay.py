@@ -109,8 +109,6 @@ def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name:
 
     print(f"[+] Found {len(commits)} commits to replay.")
 
-    print(f"[+] Found {len(commits)} commits to replay.")
-
     plain_path = plain_repo.working_tree_dir
 
     # cipher commit hash -> the plaintext commit corresponding to it,
