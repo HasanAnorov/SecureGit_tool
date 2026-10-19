@@ -7,6 +7,12 @@ def _remote_branches(enc_repo, remote):
     return {ref.remote_head: ref.commit.hexsha
             for ref in enc_repo.remote(remote).refs if ref.remote_head not in ("HEAD", ACCESS_BRANCH)}
 
+def _access_tip(enc_repo, remote):
+    """Commit hash of the server's access branch as the encrypted repo knows it ('' if none)."""
+    try:
+        return enc_repo.commit(f"{remote}/{ACCESS_BRANCH}").hexsha
+    except Exception:
+        return ""
 
 @click.command(name="fetch")
 @click.argument("plaintext_repo_path")
@@ -25,6 +31,7 @@ def securegit_fetch(plaintext_repo_path, encrypted_repo_path, remote):
     except ValueError:
         click.echo(f"[!] No remote named '{remote}' in the encrypted repo.")
         return
+    access_before = _access_tip(enc_repo, remote)
 
     try:
         enc_repo.git.fetch(remote)
@@ -36,6 +43,9 @@ def securegit_fetch(plaintext_repo_path, encrypted_repo_path, remote):
     built = [h.name for h in plain_repo.heads]
     enc_local = [h.name for h in enc_repo.heads]
     reported = False
+    if _access_tip(enc_repo, remote) != access_before:
+        click.echo("[+] Access branch updated (members or keys changed).")
+        reported = True
     for name in sorted(after):
         if name not in before and name not in built:
             click.echo(f"[+] New branch '{name}'. Build it with: "

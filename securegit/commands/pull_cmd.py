@@ -7,6 +7,7 @@ from ..core.Git_command import get_git_diff_name
 from git import Repo, GitCommandError, Actor
 from ..core.crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
 from ..core.branch_anchor_finder import resolve_in_plain
+from ..core.access_branch import ACCESS_BRANCH
 
 @click.command()
 @click.argument("plaintext_repo_path")
@@ -60,8 +61,9 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
 
     # 1. Fetch latest remote changes
     try:
-        encrypted_repo.git.fetch(remote, branch)
-        print(f"[+] Fetched latest changes from {remote}/{branch}")
+        # the access branch too, so the members and keys are always the newest
+        encrypted_repo.git.fetch(remote, branch, ACCESS_BRANCH)
+        print(f"[+] Fetched latest changes from {remote}/{branch} and {remote}/{ACCESS_BRANCH}")
     except GitCommandError as e:
         print(f"[!] Error fetching encrypted repo:\n{e}")
         return

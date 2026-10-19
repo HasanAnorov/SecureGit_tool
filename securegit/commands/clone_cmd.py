@@ -51,6 +51,11 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         click.echo(f"[+] Cloning encrypted repo from {remote_url} -> {enc_path} (branch: {branch}) ...")
         #new line edit - allowing securegit to have multiple branches
         enc_repo = Repo.clone_from(remote_url, enc_path, branch=branch, single_branch=single_branch)
+        # a single-branch clone downloads only that branch: add the access branch to its
+        # fetch rule, so this clone and every later fetch also bring the members and keys
+        if single_branch:
+            enc_repo.git.remote("set-branches", "--add", "origin", ACCESS_BRANCH)
+            enc_repo.git.fetch("origin", ACCESS_BRANCH)
     except GitCommandError as e:
         click.echo(f"[!] Clone failed: {e}")
         return
