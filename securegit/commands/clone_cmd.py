@@ -2,6 +2,7 @@ import click
 from pathlib import Path
 from git import Repo, GitCommandError
 from ..core.replay import load_crypto, build_branch
+from ..core.access_branch import ACCESS_BRANCH
 
 @click.command(name="clone", context_settings=dict(allow_interspersed_args=False))
 @click.argument("remote_url")                  # e.g. https://github.com/user/encrypted_repo.git
@@ -36,6 +37,10 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
 
     if single_branch and plain_all:
         click.echo("[!] --single-branch and --plain-all cannot be used together.")
+        return
+
+    if branch == ACCESS_BRANCH:
+        click.echo(f"[!] '{ACCESS_BRANCH}' is the access branch (members and keys), not a code branch.")
         return
 
     # --- 1) Clone encrypted repo ---
@@ -88,7 +93,7 @@ def securegit_clone(remote_url, encrypted_repo_path, plaintext_repo_path, owner_
         if plain_all:
             for ref in enc_repo.remote().refs:
                 name = ref.remote_head
-                if name in ("HEAD", branch):
+                if name in ("HEAD", branch, ACCESS_BRANCH):
                     continue
                 plain_repo.git.checkout("--detach")
                 build_branch(enc_repo, plain_repo, str(ref), name, crypto)

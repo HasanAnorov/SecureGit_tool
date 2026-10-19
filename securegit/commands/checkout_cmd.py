@@ -1,6 +1,7 @@
 import click
 from git import Repo, GitCommandError
 from ..core.replay import load_crypto, build_branch
+from ..core.access_branch import ACCESS_BRANCH
 
 def _recorded(plain_repo, key):
     """A value clone recorded in plain's .git/config, as text ('' if missing)."""
@@ -38,6 +39,11 @@ def securegit_checkout(plaintext_repo_path, encrypted_repo_path, args, owner_nam
     Secure version of 'git checkout'.
     Behaves like 'git checkout', but runs on both plaintext and encrypted repos.
     """
+
+    # the access branch is not code: never build it, create it (-b) or reset it (-B)
+    if ACCESS_BRANCH in args:
+        click.echo(f"[!] '{ACCESS_BRANCH}' is the access branch (members and keys), not a code branch.")
+        return
 
     plain_repo = Repo(plaintext_repo_path)
     enc_repo = Repo(encrypted_repo_path)

@@ -1,11 +1,11 @@
 import click
 from git import Repo, GitCommandError
-
+from ..core.access_branch import ACCESS_BRANCH
 
 def _remote_branches(enc_repo, remote):
-    """Branch name -> commit hash, as the encrypted repo knows the server."""
+    """Code branch name -> commit hash, as the encrypted repo knows the server."""
     return {ref.remote_head: ref.commit.hexsha
-            for ref in enc_repo.remote(remote).refs if ref.remote_head != "HEAD"}
+            for ref in enc_repo.remote(remote).refs if ref.remote_head not in ("HEAD", ACCESS_BRANCH)}
 
 
 @click.command(name="fetch")
