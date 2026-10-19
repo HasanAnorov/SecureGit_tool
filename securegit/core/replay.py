@@ -37,7 +37,7 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey=None, sy
         raise ValueError(f"'{sharee_name}' is not on the access branch '{ACCESS_BRANCH}'. "
                          f"Either the repo was never shared with '{sharee_name}', or the sharee_name is wrong.")
 
-    # sign_pubs - needed only when a commit lacks the shareinfo folder
+    # sign_pubs - every member's signing key, to check who wrote each commit
     sign_pubs = {}
     for blob in (shareinfo_commit.tree / "shareinfo").traverse():
         if blob.type == 'blob' and blob.name.endswith("_sign_pub.der"):
@@ -128,22 +128,12 @@ def build_branch(enc_repo: Repo, plain_repo: Repo, branch_ref: str, branch_name:
     for idx, commit in enumerate(commits, start=1):
         print(f"[{idx}/{len(commits)}] Replaying encrypted commit {commit.hexsha[:12]} ...")
 
-        # the author's public key: from this commit's shareinfo if it has one,
-        # otherwise from the sign_pubs collected by load_crypto
+        # the author's public key, from the access state loaded by load_crypto
         username = commit.author.name
-        public_key = None
-        try:
-            if verify_publickey(crypto.owner_public_key, commit):
-                public_file = commit.tree / "shareinfo" / f"{username}_sign_pub.der"
-                public_key = public_file.data_stream.read()
-        except (KeyError, FileNotFoundError):
-            pass
-
-        if public_key is None:
-            if username not in crypto.sign_pubs:
-                raise ValueError(f"Commit {commit.hexsha[:12]} authored by unknown "
-                                 f"'{username}' — aborting.")
-            public_key = crypto.sign_pubs[username].export_key(format='DER')
+        if username not in crypto.sign_pubs:
+            raise ValueError(f"Commit {commit.hexsha[:12]} authored by unknown "
+                             f"'{username}' — aborting.")
+        public_key = crypto.sign_pubs[username].export_key(format='DER')
 
         if not verify_commit(commit, public_key):
             raise ValueError(f"Signature check failed for commit {commit.hexsha[:12]} — aborting.")
