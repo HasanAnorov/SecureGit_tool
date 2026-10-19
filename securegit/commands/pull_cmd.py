@@ -1,13 +1,12 @@
-import json
 import click
 from pathlib import Path
-from Crypto.PublicKey import ECC
 from ..core.repo_operation import dec_patch_diff, dec_line_diff
 from ..core.Git_command import get_git_diff_name
 from git import Repo, GitCommandError, Actor
-from ..core.crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
+from ..core.crypto_tool import verify_commit, split_commit_message
 from ..core.branch_anchor_finder import resolve_in_plain
 from ..core.access_branch import ACCESS_BRANCH
+from ..core.replay import load_crypto
 
 @click.command()
 @click.argument("plaintext_repo_path")
@@ -23,35 +22,21 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
     """
     Pull latest commits from encrypted repo (can be multiple), decrypt each, and apply to plaintext repo.
     """
+
+    # the access branch is not code: there is nothing to pull into plain
+    if branch == ACCESS_BRANCH:
+        print(f"[!] '{ACCESS_BRANCH}' is the access branch (members and keys), not a code branch.")
+        return
+
     encrypted_repo = Repo(encrypted_repo_path)
     plain_repo = Repo(plaintext_repo_path)
 
-    enc_path = Path(encrypted_repo_path).resolve()
-    plain_path = Path(plaintext_repo_path).resolve()
-
+    # the saved repository key, if given; otherwise load_crypto decrypts it with the private key
+    sym_key = None
     if sym_key_path:
         with open(sym_key_path, "rb") as sym_file:
             sym_key = sym_file.read()
         print(f"[+] Loaded AES key from {sym_key_path} ({len(sym_key)} bytes)")
-    elif privkey_path:
-        with open(privkey_path, "rb") as priv_file:
-            user_priv_key = priv_file.read()
-
-        cipher_path = enc_path / "shareinfo" / f"{user_name}_keycipher.bin"
-        if not cipher_path.exists():
-            raise FileNotFoundError(f"[!] Cipher file not found: {cipher_path}")
-
-        with open(cipher_path, "rb") as f2:
-            enc_key = f2.read()
-
-        sym_key = ecies_decrypt_with_aesctr(user_priv_key, enc_key)
-
-        out_path = Path(key_out_path) if key_out_path else Path.cwd() / "symkey.bin"
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(out_path, "wb") as f3:
-            f3.write(sym_key)
 
     # a pull replays commits and stages everything, so any uncommitted work
     # in the plaintext repo would be swept into someone else's commit
@@ -68,6 +53,19 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
         print(f"[!] Error fetching encrypted repo:\n{e}")
         return
 
+    # members, keys and mode from the newest access state, which was just fetched
+    try:
+        crypto = load_crypto(encrypted_repo, owner_name, user_name, privkey_path, sym_key=sym_key)
+    except Exception as e:
+        print(f"[!] Could not load the keys: {e}")
+        return
+    sym_key, mode = crypto.sym_key, crypto.mode
+    if privkey_path and not sym_key_path:
+        # decrypted with the private key: save it for later pulls, as before
+        out_path = Path(key_out_path) if key_out_path else Path.cwd() / "symkey.bin"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(sym_key)
+
     # 2. Commits on the remote branch that plain does not have yet,
     #    ordered so each parent comes before its children
     order = encrypted_repo.git.rev_list(f"{remote}/{branch}", "--not", branch,
@@ -76,21 +74,6 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
     if not new_commits:
         print("[+] No new commits to pull.")
         return
-
-    config_path = enc_path / "securegit_config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"[!] Config not found: {config_path}")
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    mode = config.get("mode")
-
-    owner_key_path = enc_path / "shareinfo" / f"{owner_name}_sign_pub.der"
-    if not owner_key_path.exists():
-        raise FileNotFoundError(f"[!] Owner sign_pub not found: {owner_key_path}")
-    with open(owner_key_path, "rb") as f1:
-        owner_public_key = ECC.import_key(f1.read())
 
     # cipher commit hash -> the plaintext commit for it. The two branch tips
     # correspond: plain's branch was built from the cipher branch's current tip.
@@ -110,14 +93,13 @@ def securegit_pull(plaintext_repo_path, encrypted_repo_path, owner_name, user_na
         except ValueError:
             pass
 
-        if not verify_publickey(owner_public_key, commit):
-            click.echo(f"[!] Creating plaintext commit failed")
+        # the author's public key, from the access state loaded by load_crypto
+        username = commit.author.name
+        if username not in crypto.sign_pubs:
+            click.echo(f"[!] Commit {commit.hexsha[:12]} authored by unknown '{username}' — aborting.")
             plain_repo.git.checkout("-f", branch)   # back to the untouched branch
             return
-
-        username = commit.author.name
-        public_file = commit.tree / "shareinfo" / f"{username}_sign_pub.der"
-        public_key = public_file.data_stream.read()
+        public_key = crypto.sign_pubs[username].export_key(format='DER')
 
         if not verify_commit(commit, public_key):
             click.echo(f"[!] Creating plaintext commit failed")
