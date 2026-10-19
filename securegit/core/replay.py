@@ -7,6 +7,7 @@ from .Git_command import get_git_diff_name
 from .repo_operation import dec_patch_diff, dec_line_diff
 from .branch_anchor_finder import resolve_in_plain
 from .crypto_tool import verify_commit, verify_publickey, ecies_decrypt_with_aesctr, split_commit_message
+from .access_branch import ACCESS_BRANCH, latest_state
 
 @dataclass
 class CryptoContext:
@@ -23,23 +24,17 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey=None, sy
     Moved from clone_cmd.py. Raises ValueError instead of printing and
     returning, so the calling command decides how to report errors.
     """
-    # shareinfo_commit - the commit that contains keycipher for decryption of commits
-    shareinfo_commit = None
-    try:
-        _ = enc_repo.head.commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
-        shareinfo_commit = enc_repo.head.commit
-    except KeyError:
-        # HEAD lacks keycipher: scan every branch, newest commit first
-        for commit in enc_repo.iter_commits(all=True):
-            try:
-                _ = commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
-                shareinfo_commit = commit
-                break
-            except KeyError:
-                continue
 
+    # shareinfo_commit - the commit that contains keycipher for decryption of commits:
+    # the newest state of the access branch
+    shareinfo_commit = latest_state(enc_repo)
     if shareinfo_commit is None:
-        raise ValueError(f"No commit in this repo contains 'shareinfo/{sharee_name}_keycipher.bin'. "
+        raise ValueError(f"This repo has no access branch '{ACCESS_BRANCH}'. Either the owner has not "
+                         f"shared it yet (securegit adduser), or the branch was not downloaded.")
+    try:
+        _ = shareinfo_commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin"
+    except KeyError:
+        raise ValueError(f"'{sharee_name}' is not on the access branch '{ACCESS_BRANCH}'. "
                          f"Either the repo was never shared with '{sharee_name}', or the sharee_name is wrong.")
 
     # sign_pubs - needed only when a commit lacks the shareinfo folder
@@ -68,11 +63,16 @@ def load_crypto(enc_repo: Repo, owner_name, sharee_name, sharee_privkey=None, sy
         enc_key = (shareinfo_commit.tree / "shareinfo" / f"{sharee_name}_keycipher.bin").data_stream.read()
         sym_key = ecies_decrypt_with_aesctr(user_priv_key, enc_key)
 
-    config_path = Path(enc_repo.working_tree_dir) / "securegit_config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config not found: {config_path}")
-    with open(config_path, "r", encoding="utf-8") as f:
-        mode = json.load(f).get("mode")
+    # encryption mode: from the commit that holds the keys if the config is there,
+    # otherwise from the encrypted repo's working tree as before
+    try:
+        mode = json.loads((shareinfo_commit.tree / "securegit_config.json").data_stream.read()).get("mode")
+    except KeyError:
+        config_path = Path(enc_repo.working_tree_dir) / "securegit_config.json"
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config not found: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as f:
+            mode = json.load(f).get("mode")
 
     return CryptoContext(sym_key, mode, owner_public_key, sign_pubs)
 
